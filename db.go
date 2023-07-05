@@ -1,0 +1,321 @@
+package bitcaskGo
+
+import (
+	"bitcaskGo/data"
+	"bitcaskGo/index"
+	"errors"
+	"io"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+type DB struct {
+	options    Options
+	mu         *sync.RWMutex
+	activeFile *data.Datafile            //current active file  use for write
+	olderFiles map[uint32]*data.Datafile //the set of older file map by fileid(uint32) only for read
+	index      index.Indexer             //Memory index 内存索引
+	fileIds    []int                     //File id,only use for load index, can't be used or update in other place
+}
+
+// Open Open a Bitcask storage engine instance.
+// 打开bitcask存储引擎实例
+func Open(options Options) (*DB, error) {
+	//Check the user's database options
+	if err := CheckOptions(options); err != nil {
+		return nil, err
+	}
+	//Check if the data directory exist, if not, create a new one
+	if _, err := os.Stat(options.DirPath); os.IsNotExist(err) {
+		if err := os.MkdirAll(options.DirPath, os.ModePerm); err != nil {
+			return nil, err
+		}
+	}
+	db := &DB{
+		options:    options,
+		mu:         new(sync.RWMutex),
+		olderFiles: make(map[uint32]*data.Datafile),
+		index:      index.NewIndexer(options.IndexerType),
+	}
+
+	//Load the data file
+	if err := db.loadDataFiles(); err != nil {
+		return nil, err
+	}
+
+	if err := db.loadIndexFromDataFiles(); err != nil {
+		return nil, err
+	}
+	return db, nil
+}
+
+// Put Write key/value data , the key can't be empty
+func (db *DB) Put(key []byte, value []byte) error {
+	//Check the key is available
+	if len(key) == 0 {
+		return ErrKeyIsEmpty
+	}
+
+	//Construct LogRecord struct
+	log_record := &data.LogRecord{
+		Key:   key,
+		Value: value,
+		Type:  data.LogRecordNormal,
+	}
+	//Append(Write) logRecord to activeFile
+	pos, err := db.appendLogRecord(log_record)
+	if err != nil {
+		return err
+	}
+
+	if success := db.index.Put(key, pos); !success {
+		return ErrIndexUpdateFailed
+	}
+
+	return nil
+}
+
+func (db *DB) Get(key []byte) ([]byte, error) {
+	//Have a read lock
+	db.mu.RLock()
+	defer db.mu.RUnlock() //Unlock when function return
+
+	//Check if the key is available
+	if len(key) == 0 {
+		return nil, ErrKeyIsEmpty
+	}
+	//Get the logRecordPos from index by using key
+	//从内存数据结构中取出key对应的索引信息
+	logRecordPos := db.index.Get(key)
+
+	//If key doesn't in memory data indexer, this key isn't exist
+	//如果key不在内存索引中，说明key不存在
+	if logRecordPos == nil {
+		return nil, ErrKeyNotFound
+	}
+
+	//Get the datafile from correspond FileId
+	var dataFile *data.Datafile
+
+	//Check if the datafile is active file
+	if db.activeFile.Fileid == logRecordPos.FileId {
+		dataFile = db.activeFile
+	} else {
+		dataFile = db.olderFiles[logRecordPos.FileId]
+	}
+
+	//Check if the datafile is empty
+	if dataFile == nil {
+		return nil, ErrDataFileNotFound
+	}
+
+	//Read the data by using correspond offset from logRecordPos
+
+	logRecord, _, err := dataFile.ReadLogRecord(logRecordPos.Offset)
+	if err != nil {
+		return nil, err
+	}
+	if logRecord.Type == data.LogRecordDeleted {
+		return nil, ErrLogRecordDeleted
+	}
+
+	return logRecord.Value, nil
+}
+
+func (db *DB) Delete(key []byte) error {
+	//Validate the key
+	if len(key) == 0 {
+		return ErrKeyIsEmpty
+	}
+
+	//Check if the key exists, if it doesn't, return directly
+	if logRecordPos := db.index.Get(key); logRecordPos == nil {
+		return ErrKeyNotFound
+	}
+
+	//Construct the logRecord which type is deleted
+	logRecord := &data.LogRecord{Key: key, Type: data.LogRecordDeleted}
+
+	//Write(append) this logRecord to data file
+	_, err := db.appendLogRecord(logRecord)
+	if err != nil {
+		return err
+	}
+	//Delete the correspond key in index
+	if success := db.index.Delete(key); !success {
+		return ErrIndexUpdateFailed
+	}
+	return nil
+}
+
+// Append logRecord to activeFile
+func (db *DB) appendLogRecord(logRecord *data.LogRecord) (*data.LogRecordPos, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	//Check if the current active datafile is existed,
+	//because when database have no write, the active datafile is empty
+	//if it's empty , create a new one
+
+	if db.activeFile == nil {
+		if err := db.setActiveDataFile(); err != nil {
+			return nil, err
+		}
+	}
+
+	//Encode logRecord, get ready for writing
+	encLogRecord, length := data.EncodeLogRecord(logRecord)
+
+	//Check if the data size bigger than activefile's limit
+	if db.activeFile.WriteOff+length > db.options.DataFileSize {
+		//if so, in order to save the data to disk, we need to sync the datafile to disk
+		//先持久化数据文件，保证数据都持久化到磁盘中
+		if err := db.activeFile.Sync(); err != nil {
+			return nil, err
+		}
+
+		//Transform the activefile to olderfile
+		db.olderFiles[db.activeFile.Fileid] = db.activeFile
+
+		//Open a new activefile
+		if err := db.setActiveDataFile(); err != nil {
+			return nil, err
+		}
+	}
+
+	writeoff := db.activeFile.WriteOff
+	if err := db.activeFile.Write(encLogRecord); err != nil {
+		return nil, err
+	}
+
+	//Do the sync() options depends on user's option
+	if db.options.SyncWrites {
+		if err := db.activeFile.Sync(); err != nil {
+			return nil, err
+		}
+	}
+
+	//Construct memory index information
+	//构造内存索引信息
+	pos := &data.LogRecordPos{FileId: db.activeFile.Fileid, Offset: writeoff}
+	return pos, nil
+
+}
+
+// Set current active datafile
+// we must have mutex lock when we use this method
+func (db *DB) setActiveDataFile() error {
+	var initialFileId uint32 = 0
+	if db.activeFile != nil {
+		//if there was an active datafile
+		//the new active datafile's FileId should plus 1
+		initialFileId = db.activeFile.Fileid + 1
+	}
+	dataFile, err := data.OpenDataFile(db.options.DirPath, initialFileId)
+	if err != nil {
+		return err
+	}
+	db.activeFile = dataFile
+	return nil
+}
+
+func (db *DB) loadDataFiles() error {
+	dirEntries, err := os.ReadDir(db.options.DirPath)
+	if err != nil {
+		return err
+	}
+
+	var fileIds []int
+	for _, entry := range dirEntries {
+		//Get the file id
+		if strings.HasSuffix(entry.Name(), data.DataFileNameSuffix) {
+			splitFileName := strings.Split(entry.Name(), ".")
+			fileId, err := strconv.Atoi(splitFileName[0])
+			if err != nil {
+				return ErrDataDirectoryCorrupted
+			}
+			fileIds = append(fileIds, fileId)
+		}
+	}
+	//Sort the file id
+	sort.Ints(fileIds)
+
+	//Go through each file id and open the correspond data file
+	for i, fid := range fileIds {
+		dataFile, err := data.OpenDataFile(db.options.DirPath, uint32(fid))
+		if err != nil {
+			return err
+		}
+		//If it's the last one, means that the file id is biggest
+		//thus, the data file is active data file
+		if i == len(fileIds)-1 {
+			db.activeFile = dataFile
+		} else { //Otherwise, it's older file
+			db.olderFiles[uint32(fid)] = dataFile
+		}
+	}
+	return nil
+}
+
+func (db *DB) loadIndexFromDataFiles() error {
+	//The database is empty, no datafile
+	if len(db.fileIds) == 0 {
+		return nil
+	}
+	//Go through fileIds and handle the logRecords in each file
+	//Go through each file:
+	for i, fid := range db.fileIds {
+		var fileid = uint32(fid)
+		var dataFile *data.Datafile
+		if fileid == db.activeFile.Fileid {
+			dataFile = db.activeFile
+		} else {
+			dataFile = db.olderFiles[fileid]
+		}
+		//Handle logRecords in each dataFile
+		var offset int64 = 0 //In each datafile, the offset stars from 0
+		for {
+			logRecord, size, err := dataFile.ReadLogRecord(offset)
+			//Check the type of err: when we hit the last record, it's correct to get a EOF err
+			if err != nil {
+				if err == io.EOF {
+					break //jump out of the loop
+				}
+				return err
+			}
+
+			//Construct and save the memory index
+			logRecordPos := &data.LogRecordPos{FileId: fileid, Offset: offset}
+			//Check if the logRecord has been deleted
+			if logRecord.Type == data.LogRecordDeleted {
+				db.index.Delete(logRecord.Key)
+			} else { //Save the key---logRecordPos index to memory indexer
+				db.index.Put(logRecord.Key, logRecordPos)
+			}
+
+			//Update the offset , read in a new position next time
+			offset += size
+		}
+		//If we are in the last(active) file, we need to update the active file's WriteOff by using offset
+		//make sure that we can append the logRecord in a right position
+		if i == len(db.fileIds)-1 {
+			db.activeFile.WriteOff = offset
+		}
+
+	}
+	return nil
+}
+
+func CheckOptions(options Options) error {
+	if options.DirPath == "" {
+		return errors.New("database directory path is empty")
+	}
+
+	if options.DataFileSize <= 0 {
+		return errors.New("database data file size must be greater than 0")
+	}
+
+	return nil
+}
