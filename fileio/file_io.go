@@ -9,10 +9,10 @@ type FileIO struct {
 	fd *os.File //system file  descriptor
 }
 
-// Create a file_io
-func NewFileIOManager(fildPath string) (*FileIO, error) {
+// NewFileIOManager Create a file_io
+func NewFileIOManager(filePath string) (*FileIO, error) {
 	fd, err := os.OpenFile(
-		fildPath,
+		filePath,
 		os.O_CREATE|os.O_RDWR|os.O_APPEND, // if this file doesn't exist, then create one(O_CREATE), this file can READ & Write(O_RDWR), and append the data when write
 		DataFilePerm,                      //0644, give the perm
 	)
@@ -24,7 +24,6 @@ func NewFileIOManager(fildPath string) (*FileIO, error) {
 
 func (fio *FileIO) Read(b []byte, offset int64) (int, error) {
 	return fio.fd.ReadAt(b, offset)
-
 }
 
 func (fio *FileIO) Write(b []byte) (int, error) {
@@ -37,4 +36,12 @@ func (fio *FileIO) Sync() error {
 
 func (fio *FileIO) Close() error {
 	return fio.fd.Close()
+}
+
+func (fio *FileIO) Size() (int64, error) {
+	stat, err := fio.fd.Stat()
+	if err != nil {
+		return 0, err
+	}
+	return stat.Size(), nil
 }
