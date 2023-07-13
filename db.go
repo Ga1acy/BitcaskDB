@@ -82,7 +82,6 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 	//Have a read lock
 	db.mu.RLock()
 	defer db.mu.RUnlock() //Unlock when function return
-
 	//Check if the key is available
 	if len(key) == 0 {
 		return nil, ErrKeyIsEmpty
@@ -241,6 +240,7 @@ func (db *DB) loadDataFiles() error {
 	}
 	//Sort the file id
 	sort.Ints(fileIds)
+	db.fileIds = fileIds
 
 	//Go through each file id and open the correspond data file
 	for i, fid := range fileIds {
