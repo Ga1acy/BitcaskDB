@@ -1,5 +1,7 @@
 package bitcaskGo
 
+import "os"
+
 type Options struct {
 	//Database 's data 's directory
 	DirPath string
@@ -22,3 +24,10 @@ const (
 	// ART Adaptive Radix Tree indexer
 	ART
 )
+
+var DefaultOptions = Options{
+	DirPath:      os.TempDir(),
+	DataFileSize: 256 * 1024 * 1024,
+	SyncWrites:   false,
+	IndexerType:  BTree,
+}
