@@ -66,7 +66,7 @@ func (df *Datafile) ReadLogRecord(offset int64) (*LogRecord, int64, error) {
 		headerSize = fileSize - offset
 	}
 
-	//get the encoded header information of logRecord
+	//get the encoded header  of logRecord
 	encoHeaderBuf, err := df.readNBytes(headerSize, offset)
 	if err != nil {
 		return nil, 0, err
@@ -111,7 +111,11 @@ func (df *Datafile) ReadLogRecord(offset int64) (*LogRecord, int64, error) {
 		//set logRecord's value
 		logRecord.Value = kvBuf[keySize:]
 	}
-	//encoHeaderBuf[crc32.size : headerSize]: in order to cut off the redundant header value, just keep the crc value
+
+	//the way we cut off encoHeaderBuf part is that: crc takes 4 bytes, and crc32.Size is also 4 bytes
+	//thus we get the header part excepts crc value by doing this cut off,
+	//and we also get the key and value from logRecord
+	//now we can calculate the crc value by using all of this information
 	crc := getLogRecordCRC(logRecord, encoHeaderBuf[crc32.Size:headerSize])
 	if crc != header.crc {
 		return nil, 0, ErrInvalidCRC
