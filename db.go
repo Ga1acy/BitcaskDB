@@ -96,6 +96,76 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 		return nil, ErrKeyNotFound
 	}
 
+	//get value from data file by using logRecordPos
+	return db.getValueByPosition(logRecordPos)
+}
+
+// Close the database
+func (db *DB) Close() error {
+	if db.activeFile == nil {
+		return nil
+	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	//close the active adta file
+	if err := db.activeFile.Close(); err != nil {
+		return err
+	}
+
+	//close older data files
+	for _, olderfile := range db.olderFiles {
+		if err := olderfile.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Sync Persisting data files, sync active file's data into disk
+func (db *DB) Sync() error {
+	if db.activeFile == nil {
+		return nil
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return db.activeFile.Sync()
+}
+
+// ListKeys get all keys in the database
+func (db *DB) ListKeys() [][]byte {
+	iterator := db.index.Iterator(false) //use index iterator, because index have all keys' information
+	keys := make([][]byte, db.index.Size())
+	var idx int
+	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
+		keys[idx] = iterator.Key()
+		idx++
+	}
+	return keys
+}
+
+// Fold get all data(keys and values), and do specific operation user ask
+// when fn return false, shut down the traverse
+func (db *DB) Fold(fn func(key []byte, value []byte) bool) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	iterator := db.index.Iterator(false)
+	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
+		value, err := db.getValueByPosition(iterator.Value())
+		if err != nil {
+			return err
+		}
+		if !fn(iterator.Key(), value) {
+			break
+		}
+	}
+	return nil
+}
+
+// get value by using logRecordPos
+func (db *DB) getValueByPosition(logRecordPos *data.LogRecordPos) ([]byte, error) {
+
 	//Get the datafile from correspond FileId
 	var dataFile *data.Datafile
 
