@@ -85,7 +85,7 @@ func EncodeLogRecord(logRecord *LogRecord) ([]byte, int64) {
 // decode the header information in the byte array
 // return logRecordHeader and it's size
 func decodeLogRecordHeader(buf []byte) (*logRecordHeader, int64) {
-	if len(buf) < 4 {
+	if len(buf) <= 4 {
 		return nil, 0
 	}
 
