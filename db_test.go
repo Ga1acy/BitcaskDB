@@ -10,7 +10,7 @@ import (
 func destroyDB(db *DB) {
 	if db != nil {
 		if db.activeFile != nil {
-			_ = db.activeFile.Close()
+			_ = db.Close()
 		}
 		err := os.RemoveAll(db.options.DirPath)
 		if err != nil {
@@ -72,7 +72,7 @@ func TestDB_Put(t *testing.T) {
 	assert.Equal(t, 2, len(db.olderFiles))
 
 	// 6.重启后再 Put 数据
-	err = db.activeFile.Close()
+	err = db.Close()
 	assert.Nil(t, err)
 
 	// 重启数据库
@@ -137,7 +137,7 @@ func TestDB_Get(t *testing.T) {
 	assert.NotNil(t, val5)
 
 	// 6.重启后，前面写入的数据都能拿到
-	err = db.activeFile.Close()
+	err = db.Close()
 	assert.Nil(t, err)
 
 	// 重启数据库
@@ -177,7 +177,7 @@ func TestDB_Delete(t *testing.T) {
 
 	// 2.删除一个不存在的 key
 	err = db.Delete([]byte("unknown key"))
-	assert.Nil(t, err)
+	assert.Equal(t, ErrKeyNotFound, err)
 
 	// 3.删除一个空的 key
 	err = db.Delete(nil)
@@ -196,7 +196,7 @@ func TestDB_Delete(t *testing.T) {
 	assert.Nil(t, err)
 
 	// 5.重启之后，再进行校验
-	err = db.activeFile.Close()
+	err = db.Close()
 	assert.Nil(t, err)
 
 	// 重启数据库
@@ -207,4 +207,106 @@ func TestDB_Delete(t *testing.T) {
 	val2, err := db2.Get(utils.GetTestKey(22))
 	assert.Nil(t, err)
 	assert.Equal(t, val1, val2)
+}
+
+func TestDB_Close(t *testing.T) {
+	opts := DefaultOptions
+	dir, _ := os.MkdirTemp("", "bitcask-go-close")
+	opts.DirPath = dir
+	db, err := Open(opts)
+	defer destroyDB(db)
+	assert.Nil(t, err)
+	assert.NotNil(t, db)
+
+	err = db.Put(utils.GetTestKey(10), utils.RandomValue(20))
+	assert.Nil(t, err)
+
+}
+
+func TestDB_Sync(t *testing.T) {
+	opts := DefaultOptions
+	dir, _ := os.MkdirTemp("", "bitcask-go-sync")
+	opts.DirPath = dir
+	db, err := Open(opts)
+	defer destroyDB(db)
+	assert.Nil(t, err)
+	assert.NotNil(t, db)
+
+	err = db.Put(utils.GetTestKey(10), utils.RandomValue(20))
+	assert.Nil(t, err)
+
+	err = db.Sync()
+	assert.Nil(t, err)
+
+}
+
+func TestDB_ListKeys(t *testing.T) {
+	opts := DefaultOptions
+	dir, _ := os.MkdirTemp("", "bitcask-go-listKeys")
+	opts.DirPath = dir
+	db, err := Open(opts)
+	defer destroyDB(db)
+	assert.Nil(t, err)
+	assert.NotNil(t, db)
+
+	//case1:database is empty
+	keys1 := db.ListKeys()
+	assert.Equal(t, 0, len(keys1))
+
+	//case2:only one data in database
+	err = db.Put(utils.GetTestKey(10), utils.RandomValue(20))
+	assert.Nil(t, err)
+	keys2 := db.ListKeys()
+	assert.Equal(t, 1, len(keys2))
+
+	//case3:multiple data in database
+	err = db.Put(utils.GetTestKey(20), utils.RandomValue(20))
+	assert.Nil(t, err)
+	err = db.Put(utils.GetTestKey(40), utils.RandomValue(20))
+	assert.Nil(t, err)
+	err = db.Put(utils.GetTestKey(50), utils.RandomValue(20))
+	assert.Nil(t, err)
+	err = db.Put(utils.GetTestKey(60), utils.RandomValue(20))
+	assert.Nil(t, err)
+
+	keys3 := db.ListKeys()
+	assert.Equal(t, 5, len(keys3))
+	for _, k := range keys3 {
+		//t.Log(string(k)) //find a bug, idx need to update after every looping
+		assert.NotNil(t, k)
+	}
+
+}
+
+func TestDB_Fold(t *testing.T) {
+	opts := DefaultOptions
+	dir, _ := os.MkdirTemp("", "bitcask-go-fold")
+	opts.DirPath = dir
+	db, err := Open(opts)
+	defer destroyDB(db)
+	assert.Nil(t, err)
+	assert.NotNil(t, db)
+
+	err = db.Put(utils.GetTestKey(10), utils.RandomValue(20))
+	assert.Nil(t, err)
+	err = db.Put(utils.GetTestKey(20), utils.RandomValue(20))
+	assert.Nil(t, err)
+	err = db.Put(utils.GetTestKey(30), utils.RandomValue(20))
+	assert.Nil(t, err)
+	err = db.Put(utils.GetTestKey(40), utils.RandomValue(20))
+	assert.Nil(t, err)
+
+	//customize function as argument
+	err = db.Fold(func(key []byte, value []byte) bool {
+		assert.NotNil(t, key)
+		assert.NotNil(t, value)
+		//t.Log(string(key))
+		//t.Log(string(value))
+		//if bytes.Compare(key, utils.GetTestKey(20)) == 0 {
+		//	t.Log("hit the condition, return false, shut down the function")
+		//	return false
+		//}
+		return true
+	})
+	assert.Nil(t, err)
 }
