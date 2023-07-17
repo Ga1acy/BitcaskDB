@@ -53,3 +53,60 @@ func TestBtree_Delete(t *testing.T) {
 	assert.True(t, test2)
 
 }
+
+func TestBTree_Iterator(t *testing.T) {
+	bt1 := NewBtree()
+	//case1: empty btree
+	iter1 := bt1.Iterator(false)
+	assert.Equal(t, false, iter1.Valid()) //empty iterator, thus the valid funciton return false
+
+	//case2:btree have 1 data
+	bt1.Put([]byte("test1"), &data.LogRecordPos{
+		FileId: 1,
+		Offset: 1,
+	})
+	iter2 := bt1.Iterator(false)
+	//when the iterators pointer points to the only one data
+	assert.NotNil(t, iter2.Key())
+	assert.NotNil(t, iter2.Value())
+	assert.Equal(t, true, iter2.Valid())
+	iter2.Next()
+	//because there is only one data,
+	//after Next() operation, valid() should return false now
+	assert.Equal(t, false, iter2.Valid())
+
+	//case3: btree have more than one data
+	bt1.Put([]byte("test2"), &data.LogRecordPos{
+		FileId: 1,
+		Offset: 1,
+	})
+	bt1.Put([]byte("test3"), &data.LogRecordPos{
+		FileId: 1,
+		Offset: 1,
+	})
+	bt1.Put([]byte("test4"), &data.LogRecordPos{
+		FileId: 1,
+		Offset: 1,
+	})
+	iter3 := bt1.Iterator(false)
+	for iter3.Rewind(); iter3.Valid(); iter3.Next() {
+		//t.Log("key = ", string(iter3.Key()))   check the output
+		assert.NotNil(t, iter3.Key())
+	}
+	iter4 := bt1.Iterator(true) //reverse
+	for iter4.Rewind(); iter4.Valid(); iter4.Next() {
+		//t.Log("key = ", string(iter4.Key()))   check the output
+		assert.NotNil(t, iter4.Key())
+	}
+	//test seek function
+	iter5 := bt1.Iterator(false)
+	for iter5.Seek([]byte("test2")); iter5.Valid(); iter5.Next() {
+		//t.Log(string(iter5.Key()))  check the output
+		assert.NotNil(t, iter5.Key())
+	}
+	iter6 := bt1.Iterator(true)
+	for iter6.Seek([]byte("test4")); iter6.Valid(); iter6.Next() {
+		//t.Log(string(iter6.Key())) //check the output
+		assert.NotNil(t, iter6.Key())
+	}
+}
