@@ -33,6 +33,14 @@ type IteratorOptions struct {
 	Reverse bool
 }
 
+type WriteBatchOptions struct {
+	//the max number of data in one batch
+	MaxBatchNum uint
+
+	//whether sync or not when we commit the transaction
+	SyncWrites bool
+}
+
 var DefaultOptions = Options{
 	DirPath:      os.TempDir(),
 	DataFileSize: 256 * 1024 * 1024,
@@ -43,4 +51,9 @@ var DefaultOptions = Options{
 var DefaultIteratorOptions = IteratorOptions{
 	Prefix:  nil,
 	Reverse: false,
+}
+
+var DefaultWriteBatchOptions = WriteBatchOptions{
+	MaxBatchNum: 10000,
+	SyncWrites:  true,
 }
