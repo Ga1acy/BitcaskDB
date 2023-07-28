@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,8 +44,18 @@ func Open(options Options) (*DB, error) {
 		index:      index.NewIndexer(options.IndexerType),
 	}
 
+	//load merge data directory
+	if err := db.loadMergeFiles(); err != nil {
+		return nil, err
+	}
+
 	//Load the data file
 	if err := db.loadDataFiles(); err != nil {
+		return nil, err
+	}
+
+	//load index from hint file
+	if err := db.loadIndexFromHintFile(); err != nil {
 		return nil, err
 	}
 
@@ -345,6 +356,19 @@ func (db *DB) loadIndexFromDataFiles() error {
 		return nil
 	}
 
+	//check if the merge process happened
+	hasMerge, nonMergeFileId := false, uint32(0)
+	mergeFinishedFileName := filepath.Join(db.options.DirPath, data.MergeFinishedFileName)
+	if _, err := os.Stat(mergeFinishedFileName); err == nil {
+		//means that merge is finished
+		//thus we already get some index from hint file
+		fid, err := db.getNonMergeFileId(db.options.DirPath)
+		if err != nil {
+			return err
+		}
+		hasMerge = true
+		nonMergeFileId = fid
+	}
 	updateIndex := func(key []byte, typ data.LogRecordType, pos *data.LogRecordPos) {
 		//Check if the logRecord has been deleted
 		var success bool
@@ -365,6 +389,15 @@ func (db *DB) loadIndexFromDataFiles() error {
 	//Go through each file:
 	for i, fid := range db.fileIds {
 		var fileid = uint32(fid)
+		//if we have merged, means that we already load those index
+		//which file id less than nonMergeFileId from hint file,
+		//thus we should jump out of them while loading
+
+		//in other words, if the file id small than the recent nonMerge file id
+		//means that we already load that from hint file
+		if hasMerge && fileid < nonMergeFileId {
+			continue
+		}
 		var dataFile *data.Datafile
 		if fileid == db.activeFile.Fileid {
 			dataFile = db.activeFile
