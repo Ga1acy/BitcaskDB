@@ -9,7 +9,11 @@ import (
 	"path/filepath"
 )
 
-const DataFileNameSuffix = ".data"
+const (
+	DataFileNameSuffix    = ".data"
+	HintFileName          = "hint-index"
+	MergeFinishedFileName = "merge-finished"
+)
 
 var (
 	ErrInvalidCRC = errors.New("invalid crc value, the log record may be broken")
@@ -21,11 +25,30 @@ type Datafile struct {
 	IOManager fileio.IOManager //io write & read manage  io读写管理
 }
 
+func GetFileName(dirPath string, fileId uint32) string {
+	return filepath.Join(dirPath, fmt.Sprintf("%09d", fileId)+DataFileNameSuffix)
+}
+
 // OpenDataFile open a new data file
 func OpenDataFile(dirPath string, fileId uint32) (*Datafile, error) {
 	//Construct the file name
-	fileName := filepath.Join(dirPath, fmt.Sprintf("%09d", fileId)+DataFileNameSuffix)
+	fileName := GetFileName(dirPath, fileId)
+	return newDataFile(fileName, fileId)
+}
 
+// OpenHintFile open hint index file
+func OpenHintFile(dirPath string) (*Datafile, error) {
+	fileName := filepath.Join(dirPath, HintFileName)
+	return newDataFile(fileName, 0)
+}
+
+func OpenMergeFinishedFile(dirPath string) (*Datafile, error) {
+	fileName := filepath.Join(dirPath, MergeFinishedFileName)
+	return newDataFile(fileName, 0)
+}
+
+// abstract from OpenDataFile
+func newDataFile(fileName string, fileId uint32) (*Datafile, error) {
 	//Construct the IOManager interface
 	ioManager, err := fileio.NewIOManager(fileName)
 	if err != nil {
@@ -131,6 +154,16 @@ func (df *Datafile) Write(buf []byte) error {
 	//update the writeoff after Write operation
 	df.WriteOff += int64(n)
 	return nil
+}
+
+// WriteHintRecord write index information into hint file
+func (df *Datafile) WriteHintRecord(key []byte, pos *LogRecordPos) error {
+	record := &LogRecord{
+		Key:   key,
+		Value: EncodeLogRecordPos(pos),
+	}
+	encRecord, _ := EncodeLogRecord(record)
+	return df.Write(encRecord)
 }
 
 func (df *Datafile) Sync() error {
