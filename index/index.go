@@ -12,7 +12,7 @@ type Indexer interface {
 
 	// Put : store the data position information which correspond by key in index
 	//向索引中存取key对应的数据位置信息
-	Put(key []byte, pos *data.LogRecordPos) bool
+	Put(key []byte, pos *data.LogRecordPos) *data.LogRecordPos
 
 	// Get : get the position information by key
 	Get(key []byte) *data.LogRecordPos //通过key拿到索引位置信息
@@ -20,33 +20,41 @@ type Indexer interface {
 	// Delete the position information by key
 	//通过key删除对应的索引位置信息
 
-	Delete(key []byte) bool
+	Delete(key []byte) (*data.LogRecordPos, bool)
 
 	// Size return index's size
 	Size() int
 
 	// Iterator index iterator
 	Iterator(reverse bool) Iterator
+
+	// Close the indexer
+	Close() error
 }
 
 // IndexType enum different type of indexers
 type IndexType = int8
 
 const (
-	//BTree index
+	// Btree index
 	Btree IndexType = iota + 1
-	//自适应基数树索引
+
+	// ART 自适应基数树索引
 	ART
+
+	// BPTree B Plus Tree indexer
+	BPTree
 )
 
 // NewIndexer Init indexer depends on the indextype
-func NewIndexer(typ IndexType) Indexer {
+func NewIndexer(typ IndexType, dirPath string, sync bool) Indexer {
 	switch typ {
 	case Btree:
 		return NewBtree()
-		//TODO
 	case ART:
-		return nil
+		return NewART()
+	case BPTree:
+		return NewBPlusTree(dirPath, sync)
 	default:
 		panic("unsupported index type")
 	}
@@ -78,6 +86,6 @@ type Iterator interface {
 	Key() []byte
 	// Value get the values in current iterate position
 	Value() *data.LogRecordPos
-	// Close close the current iterator and release relevant resources
+	// Close the current iterator and release relevant resources
 	Close()
 }
