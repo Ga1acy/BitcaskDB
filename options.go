@@ -12,8 +12,17 @@ type Options struct {
 	//Decide if we need to do sync after every writing
 	SyncWrites bool
 
+	//do the sync operation when bytes accumulate to this option
+	BytesPerSync uint
+
 	// the type of indexer
 	IndexerType IndexerType
+
+	//whether we need mmap when start or not
+	MMapAtStartup bool
+
+	//threshold for data file merging
+	DataFileMergeRatio float32
 }
 
 type IndexerType = int8
@@ -23,6 +32,8 @@ const (
 	BTree IndexerType = iota + 1
 	// ART Adaptive Radix Tree indexer
 	ART
+	// BPTree B Plus Tree indexer save the index into disk
+	BPTree
 )
 
 type IteratorOptions struct {
@@ -42,10 +53,13 @@ type WriteBatchOptions struct {
 }
 
 var DefaultOptions = Options{
-	DirPath:      os.TempDir(),
-	DataFileSize: 256 * 1024 * 1024,
-	SyncWrites:   false,
-	IndexerType:  BTree,
+	DirPath:            os.TempDir(),
+	DataFileSize:       256 * 1024 * 1024,
+	SyncWrites:         false,
+	BytesPerSync:       0,
+	IndexerType:        BTree,
+	MMapAtStartup:      true,
+	DataFileMergeRatio: 0.5,
 }
 
 var DefaultIteratorOptions = IteratorOptions{
