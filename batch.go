@@ -21,6 +21,11 @@ type WriteBatch struct {
 }
 
 func (db *DB) NewWriteBatch(opts WriteBatchOptions) *WriteBatch {
+
+	if db.options.IndexerType == BPTree && !db.seqNoFileExists && !db.isInitial {
+		panic("can not use write batch, seq no file does not exists ")
+	}
+
 	return &WriteBatch{
 		options:       opts,
 		mu:            new(sync.Mutex),
@@ -127,11 +132,15 @@ func (wb *WriteBatch) Commit() error {
 	//update the memory index
 	for _, record := range wb.pendingWrites {
 		pos := positions[string(record.Key)]
+		var oldPos *data.LogRecordPos
 		if record.Type == data.LogRecordNormal {
-			wb.db.index.Put(record.Key, pos)
+			oldPos = wb.db.index.Put(record.Key, pos)
 		}
 		if record.Type == data.LogRecordDeleted {
-			wb.db.index.Delete(record.Key)
+			oldPos, _ = wb.db.index.Delete(record.Key)
+		}
+		if oldPos != nil {
+			wb.db.reclaimSize += int64(oldPos.Size)
 		}
 	}
 
