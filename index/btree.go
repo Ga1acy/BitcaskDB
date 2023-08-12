@@ -22,12 +22,15 @@ func NewBtree() *BTree {
 	}
 }
 
-func (bt *BTree) Put(key []byte, pos *data.LogRecordPos) bool {
+func (bt *BTree) Put(key []byte, pos *data.LogRecordPos) *data.LogRecordPos {
 	it := &Item{key: key, pos: pos}
 	bt.lock.Lock()
-	bt.tree.ReplaceOrInsert(it)
+	oldItem := bt.tree.ReplaceOrInsert(it)
 	bt.lock.Unlock()
-	return true
+	if oldItem == nil {
+		return nil
+	}
+	return oldItem.(*Item).pos
 }
 func (bt *BTree) Get(key []byte) *data.LogRecordPos {
 	it := &Item{key: key}
@@ -37,15 +40,15 @@ func (bt *BTree) Get(key []byte) *data.LogRecordPos {
 	}
 	return btreeItem.(*Item).pos
 }
-func (bt *BTree) Delete(key []byte) bool {
+func (bt *BTree) Delete(key []byte) (*data.LogRecordPos, bool) {
 	it := &Item{key: key}
 	bt.lock.Lock()
 	oldItem := bt.tree.Delete(it) //Delete operation return a old values
 	bt.lock.Unlock()
 	if oldItem == nil { //if the old values is nil, means that the delete operation is failed
-		return false
+		return nil, false
 	}
-	return true
+	return oldItem.(*Item).pos, true
 }
 
 func (bt *BTree) Size() int {
@@ -59,6 +62,11 @@ func (bt *BTree) Iterator(reverse bool) Iterator {
 	bt.lock.RLock()
 	defer bt.lock.RUnlock()
 	return newBTreeIterator(bt.tree, reverse)
+}
+
+// Close unnecessary method
+func (bt *BTree) Close() error {
+	return nil
 }
 
 // BTree index iterator
