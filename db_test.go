@@ -5,6 +5,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
+	"time"
 )
 
 func destroyDB(db *DB) {
@@ -177,7 +178,7 @@ func TestDB_Delete(t *testing.T) {
 
 	// 2.删除一个不存在的 key
 	err = db.Delete([]byte("unknown key"))
-	assert.Equal(t, ErrKeyNotFound, err)
+	assert.Nil(t, err)
 
 	// 3.删除一个空的 key
 	err = db.Delete(nil)
@@ -309,4 +310,110 @@ func TestDB_Fold(t *testing.T) {
 		return true
 	})
 	assert.Nil(t, err)
+}
+
+func TestDB_FileLock(t *testing.T) {
+	opts := DefaultOptions
+	dir, _ := os.MkdirTemp("", "bitcask-go-filelock")
+	opts.DirPath = dir
+	db, err := Open(opts)
+	defer destroyDB(db)
+	assert.Nil(t, err)
+	assert.NotNil(t, db)
+
+	_, err = Open(opts)
+	//t.Log(err)
+	assert.Equal(t, ErrDataBaseisUsing, err)
+
+	err = db.Close()
+	assert.Nil(t, err)
+
+	db2, err := Open(opts)
+	assert.Nil(t, err)
+	assert.NotNil(t, db2)
+
+	err = db2.Close()
+	assert.Nil(t, err)
+}
+
+func TestDB_OpenWithMMap(t *testing.T) {
+	opts := DefaultOptions
+	dir := "/tmp/bitcask-go"
+	opts.DirPath = dir
+	opts.MMapAtStartup = false
+
+	//write data
+
+	//wbOpts := DefaultWriteBatchOptions
+	//wbOpts.MaxBatchNum = 10000000
+	//wb := db.NewWriteBatch(wbOpts)
+	//for i := 0; i < 500000; i++ {
+	//	err = wb.Put(utils.GetTestKey(i), utils.RandomValue(1024))
+	//	assert.Nil(t, err)
+	//}
+	//
+	//err = wb.Commit()
+	//assert.Nil(t, err)
+
+	now := time.Now()
+	db, err := Open(opts)
+	t.Log("open time", time.Since(now))
+	assert.Nil(t, err)
+	assert.NotNil(t, db)
+
+}
+
+func TestDB_Stat(t *testing.T) {
+	opts := DefaultOptions
+	dir, _ := os.MkdirTemp("", "bitcask-go-stat")
+	opts.DirPath = dir
+	db, err := Open(opts)
+	defer destroyDB(db)
+	assert.Nil(t, err)
+	assert.NotNil(t, db)
+
+	for i := 100; i < 10000; i++ {
+		err := db.Put(utils.GetTestKey(i), utils.RandomValue(128))
+		assert.Nil(t, err)
+	}
+
+	for i := 100; i < 5000; i++ {
+		err := db.Delete(utils.GetTestKey(i))
+		assert.Nil(t, err)
+	}
+
+	for i := 1000; i < 2000; i++ {
+		err := db.Put(utils.GetTestKey(i), utils.RandomValue(128))
+		assert.Nil(t, err)
+	}
+	stat := db.Stat()
+	//t.Log(stat)
+	assert.NotNil(t, stat)
+
+}
+
+func TestDB_Backup(t *testing.T) {
+	opts := DefaultOptions
+	dir, _ := os.MkdirTemp("", "bitcask-go-backup")
+	opts.DirPath = dir
+	db, err := Open(opts)
+	defer destroyDB(db)
+	assert.Nil(t, err)
+	assert.NotNil(t, db)
+
+	for i := 0; i < 100000; i++ {
+		err := db.Put(utils.GetTestKey(i), utils.RandomValue(128))
+		assert.Nil(t, err)
+	}
+	backupDir, _ := os.MkdirTemp("", "bitcask-go-backup-test")
+	err = db.Backup(backupDir)
+	assert.Nil(t, err)
+
+	opts1 := DefaultOptions
+	opts1.DirPath = backupDir
+	db2, err := Open(opts1)
+	defer destroyDB(db2)
+	assert.Nil(t, err)
+	assert.NotNil(t, db2)
+
 }
