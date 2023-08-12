@@ -2,6 +2,7 @@ package bitcaskGo
 
 import (
 	"bitcaskGo/data"
+	"bitcaskGo/utils"
 	"io"
 	"os"
 	"path"
@@ -26,6 +27,32 @@ func (db *DB) Merge() error {
 		db.mu.Unlock()
 		return ErrMergeIsProcessing
 	}
+
+	//check if the data number that can be merged achieve the threshold
+	totalSize, err := utils.DirSize(db.options.DirPath)
+	if err != nil {
+		db.mu.Unlock()
+		return err
+	}
+	if float32(db.reclaimSize)/float32(totalSize) < db.options.DataFileMergeRatio {
+		db.mu.Unlock()
+		return ErrMergeRatioUnreached
+	}
+
+	//check if the available disk size big enough to hold the data that after mering
+	availableDiskSize, err := utils.AvailableDiskSize()
+	if err != nil {
+		db.mu.Unlock()
+		return err
+	}
+
+	//mergingSize is the extra size that we get after merging
+	mergingSize := totalSize - db.reclaimSize
+	if uint64(mergingSize) >= availableDiskSize {
+		db.mu.Unlock()
+		return ErrNotEnoughSpaceForMerging
+	}
+
 	db.isMerging = true
 	defer func() {
 		//set the flag when process ends
@@ -173,8 +200,8 @@ func (db *DB) getMergePath() string {
 func (db *DB) loadMergeFiles() error {
 	mergePath := db.getMergePath()
 	//check if the mergePath exist
-	if _, err := os.Stat(mergePath); err != nil {
-		return err
+	if _, err := os.Stat(mergePath); os.IsNotExist(err) {
+		return nil
 	}
 
 	defer func() {
@@ -189,8 +216,16 @@ func (db *DB) loadMergeFiles() error {
 	var mergeFinished bool
 	var mergeFileNames []string
 	for _, entry := range dirEntries {
+		//check if the merge process is done
 		if entry.Name() == data.MergeFinishedFileName {
 			mergeFinished = true
+		}
+		//it's useless to move the seqNoFile to merge directory
+		if entry.Name() == data.SeqNoFileName {
+			continue
+		}
+		if entry.Name() == fileLockName {
+			continue
 		}
 		mergeFileNames = append(mergeFileNames, entry.Name())
 	}
