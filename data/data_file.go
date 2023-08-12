@@ -13,6 +13,7 @@ const (
 	DataFileNameSuffix    = ".data"
 	HintFileName          = "hint-index"
 	MergeFinishedFileName = "merge-finished"
+	SeqNoFileName         = "seq-no"
 )
 
 var (
@@ -30,27 +31,33 @@ func GetFileName(dirPath string, fileId uint32) string {
 }
 
 // OpenDataFile open a new data file
-func OpenDataFile(dirPath string, fileId uint32) (*Datafile, error) {
+func OpenDataFile(dirPath string, fileId uint32, ioType fileio.FileIOType) (*Datafile, error) {
 	//Construct the file name
 	fileName := GetFileName(dirPath, fileId)
-	return newDataFile(fileName, fileId)
+	return newDataFile(fileName, fileId, ioType)
 }
 
 // OpenHintFile open hint index file
 func OpenHintFile(dirPath string) (*Datafile, error) {
 	fileName := filepath.Join(dirPath, HintFileName)
-	return newDataFile(fileName, 0)
+	return newDataFile(fileName, 0, fileio.StandardFIO)
+}
+
+// OpenSeqNoFile  open seqno file
+func OpenSeqNoFile(dirPath string) (*Datafile, error) {
+	fileName := filepath.Join(dirPath, SeqNoFileName)
+	return newDataFile(fileName, 0, fileio.StandardFIO)
 }
 
 func OpenMergeFinishedFile(dirPath string) (*Datafile, error) {
 	fileName := filepath.Join(dirPath, MergeFinishedFileName)
-	return newDataFile(fileName, 0)
+	return newDataFile(fileName, 0, fileio.StandardFIO)
 }
 
 // abstract from OpenDataFile
-func newDataFile(fileName string, fileId uint32) (*Datafile, error) {
+func newDataFile(fileName string, fileId uint32, ioType fileio.FileIOType) (*Datafile, error) {
 	//Construct the IOManager interface
-	ioManager, err := fileio.NewIOManager(fileName)
+	ioManager, err := fileio.NewIOManager(fileName, ioType)
 	if err != nil {
 		return nil, err
 	}
@@ -172,6 +179,18 @@ func (df *Datafile) Sync() error {
 
 func (df *Datafile) Close() error {
 	return df.IOManager.Close()
+}
+
+func (df *Datafile) SetIOManager(dirPath string, ioType fileio.FileIOType) error {
+	if err := df.IOManager.Close(); err != nil {
+		return err
+	}
+	ioManager, err := fileio.NewIOManager(GetFileName(dirPath, df.Fileid), ioType)
+	if err != nil {
+		return err
+	}
+	df.IOManager = ioManager
+	return nil
 }
 
 // read n bytes from offset
