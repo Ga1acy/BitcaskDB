@@ -2,6 +2,7 @@ package redis
 
 import (
 	"bitcaskGo"
+	"bitcaskGo/utils"
 	"encoding/binary"
 	"errors"
 	"time"
@@ -371,6 +372,85 @@ func (rds *RedisDataStructure) popInner(key []byte, isLeft bool) ([]byte, error)
 	}
 
 	return element, nil
+}
+
+// ====================== ZSet data structure ======================
+
+func (rds *RedisDataStructure) ZAdd(key []byte, score float64, member []byte) (bool, error) {
+	metadata, err := rds.findMetadata(key, ZSet)
+	if err != nil {
+		return false, err
+	}
+
+	//construct zsetInnerKey
+	zik := &zsetInternalKey{
+		key:     key,
+		version: metadata.version,
+		member:  member,
+		score:   score,
+	}
+
+	//check if the zik exist
+	var exist = true
+	value, err := rds.db.Get(zik.encodeWithMember())
+	if err != nil && err != bitcaskGo.ErrKeyNotFound {
+		return false, err
+	}
+	if err == bitcaskGo.ErrKeyNotFound {
+		exist = false
+	}
+
+	if exist {
+		//if it's same, return directly
+		if score == utils.BytesToFloat64(value) {
+			return false, err
+		}
+	}
+
+	wb := rds.db.NewWriteBatch(bitcaskGo.DefaultWriteBatchOptions)
+	if !exist {
+		metadata.size++
+		_ = wb.Put(key, metadata.encode())
+	}
+	if exist {
+		oldKey := &zsetInternalKey{
+			key:     key,
+			version: metadata.version,
+			member:  member,
+			score:   utils.BytesToFloat64(value),
+		}
+		_ = wb.Delete(oldKey.encodeWithScore())
+	}
+	_ = wb.Put(zik.encodeWithMember(), utils.Float64ToBytes(score))
+	_ = wb.Put(zik.encodeWithScore(), nil)
+	if err = wb.Commit(); err != nil {
+		return false, err
+	}
+
+	return !exist, nil
+}
+
+func (rds *RedisDataStructure) ZScore(key []byte, member []byte) (float64, error) {
+	metadata, err := rds.findMetadata(key, ZSet)
+	if err != nil {
+		return -1, err
+	}
+	if metadata.size == 0 {
+		return -1, err
+	}
+	//construct zsetInnerKey
+	zik := &zsetInternalKey{
+		key:     key,
+		version: metadata.version,
+		member:  member,
+	}
+
+	value, err := rds.db.Get(zik.encodeWithMember())
+	if err != nil {
+		return -1, err
+	}
+	return utils.BytesToFloat64(value), err
+
 }
 
 // find the metadata, if it doesn't exist, create a new one
