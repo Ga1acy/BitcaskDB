@@ -329,3 +329,32 @@ func TestRedisDataStructure_RPop(t *testing.T) {
 	assert.Equal(t, "val-1", string(val))
 
 }
+
+func TestRedisDataStructure_ZScore(t *testing.T) {
+	opts := bitcask.DefaultOptions
+	dir, _ := os.MkdirTemp("", "bitcask-go-redit-rpop")
+	opts.DirPath = dir
+	rds, err := NewRedisDataStructure(opts)
+	assert.Nil(t, err)
+
+	ok, err := rds.ZAdd(utils.GetTestKey(1), 100, []byte("val-1"))
+	assert.True(t, ok)
+	assert.Nil(t, err)
+	//key and value remain the same, but update the score
+	ok, err = rds.ZAdd(utils.GetTestKey(1), 300, []byte("val-1"))
+	assert.False(t, ok)
+	assert.Nil(t, err)
+
+	ok, err = rds.ZAdd(utils.GetTestKey(1), 200, []byte("val-2"))
+	assert.True(t, ok)
+	assert.Nil(t, err)
+
+	value, err := rds.ZScore(utils.GetTestKey(1), []byte("val-1"))
+	assert.Equal(t, float64(300), value)
+	assert.Nil(t, err)
+
+	value, err = rds.ZScore(utils.GetTestKey(1), []byte("val-2"))
+	assert.Equal(t, float64(200), value)
+	assert.Nil(t, err)
+
+}
